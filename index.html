@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BÈO MOBILE - LIVE CONTROL</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/gh/nguyenhuuhoang/amlich-js/amlich-hnd.js"></script>
+    <style>
+        :root { --pink: #fe2c55; --glass: rgba(255, 255, 255, 0.85); --neon-pink: #ff0055; }
+        body { 
+            font-family: 'Quicksand', sans-serif; 
+            background: linear-gradient(135deg, #fff0f3 0%, #ffc1cc 100%); 
+            margin: 0; padding: 10px; 
+            height: 100vh; display: flex; flex-direction: column; box-sizing: border-box;
+        }
+
+        /* MÀN HÌNH KẾT NỐI */
+        #login-screen { 
+            flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; 
+        }
+        .glass-card { 
+            background: var(--glass); backdrop-filter: blur(10px); 
+            padding: 25px; border-radius: 25px; border: 1px solid rgba(255,255,255,0.5);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 100%; max-width: 320px;
+        }
+
+        /* MÀN HÌNH CHÍNH (ẨN KHI CHƯA CONNECT) */
+        #main-screen { display: none; flex-direction: column; height: 100%; gap: 10px; }
+
+        /* ĐỒNG HỒ */
+        .clock-box { text-align: center; color: #4a1c2c; margin-bottom: 5px; }
+        #time { font-size: 28px; font-weight: 700; color: var(--pink); display: block; }
+        #date { font-size: 13px; opacity: 0.8; }
+
+        /* ĐIỀU KHIỂN NHANH */
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .btn { 
+            padding: 12px; border: none; border-radius: 15px; font-weight: bold; 
+            font-family: 'Quicksand'; cursor: pointer; transition: 0.3s;
+            display: flex; align-items: center; justify-content: center; gap: 5px;
+        }
+        .btn-pk { background: #333; color: white; }
+        .btn-mute { background: var(--pink); color: white; }
+        .btn-mute.off { background: #888; }
+
+        /* BẢNG CHAT */
+        .chat-container { 
+            flex: 1; background: var(--glass); border-radius: 20px; 
+            overflow: hidden; display: flex; flex-direction: column;
+            border: 1px solid white;
+        }
+        #chat { 
+            height: 480px; /* Xấp xỉ 12 dòng */
+            overflow-y: auto; padding: 10px;
+            display: flex; flex-direction: column-reverse;
+        }
+        .msg { padding: 10px; border-bottom: 1px solid rgba(254, 44, 85, 0.05); font-size: 15px; line-height: 1.4; }
+        .msg b { color: var(--pink); }
+
+        /* THANH TỐC ĐỘ */
+        .speed-bar { padding: 10px; background: rgba(255,255,255,0.5); border-radius: 15px; font-size: 12px; }
+        input[type="range"] { width: 100%; accent-color: var(--pink); }
+
+        /* UI CHUNG */
+        input[type="text"] { 
+            width: 100%; padding: 15px; border-radius: 15px; border: 1px solid #ddd; 
+            margin-bottom: 10px; box-sizing: border-box; font-size: 16px;
+        }
+        .conn-btn { 
+            width: 100%; padding: 15px; background: var(--pink); color: white; 
+            border: none; border-radius: 15px; font-weight: bold; font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <div class="glass-card">
+            <h2 style="text-align:center; color:var(--pink); margin-top:0;">BÈO LIVE</h2>
+            <input type="text" id="user" placeholder="Nhập ID TikTok...">
+            <button class="conn-btn" onclick="start()">KẾT NỐI NGAY</button>
+        </div>
+    </div>
+
+    <div id="main-screen">
+        <div class="glass-card clock-box">
+            <span id="time">00:00:00</span>
+            <span id="date">Đang tải ngày tháng...</span>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-mute" id="muteBtn" onclick="toggleMute()">
+                <span id="muteIcon">🔊</span> BẬT TIẾNG
+            </button>
+            <button class="btn btn-pk" onclick="triggerPK()">
+                ⚔️ NHẮC PK 20S
+            </button>
+        </div>
+
+        <div class="chat-container">
+            <div style="background: var(--pink); color:white; padding: 8px 15px; font-size: 13px; font-weight: bold;">BÌNH LUẬN TRỰC TIẾP</div>
+            <div id="chat"></div>
+        </div>
+
+        <div class="speed-bar">
+            <b>TỐC ĐỘ CHỊ GOOGLE: <span id="speedVal">1.0</span>x</b>
+            <input type="range" id="speechSpeed" min="0.5" max="2" step="0.1" value="1.0" oninput="document.getElementById('speedVal').innerText=this.value">
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let queue = [], playing = false, isMuted = false;
+
+        // Cập nhật đồng hồ
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('time').innerText = now.toLocaleTimeString('vi-VN');
+            
+            // Tính âm lịch (sử dụng thư viện amlich-hnd hoặc logic cơ bản)
+            const d = now.getDate();
+            const m = now.getMonth() + 1;
+            const y = now.getFullYear();
+            // Đây là chuỗi hiển thị tạm thời, bạn có thể tích hợp sâu hơn library amlich
+            document.getElementById('date').innerText = `Thứ ${now.getDay() + 1}, ngày ${d}/${m}/${y} (Dương lịch)`;
+        }
+        setInterval(updateClock, 1000);
+
+        function start() {
+            const u = document.getElementById('user').value;
+            if(u) {
+                socket.emit('set-username', u);
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('main-screen').style.display = 'flex';
+            }
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('muteBtn');
+            btn.classList.toggle('off', isMuted);
+            btn.innerHTML = isMuted ? '<span>🔇</span> TẮT TIẾNG' : '<span>🔊</span> BẬT TIẾNG';
+            if(isMuted) { queue = []; playing = false; }
+        }
+
+        function triggerPK() {
+            // Phát âm thanh nhắc PK ngay lập tức
+            const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent("thả bông 20 giây cuối bèo ơi")}&tl=vi&client=tw-ob`;
+            if(!isMuted) {
+                queue.push(audioUrl);
+                if(!playing) play();
+            }
+        }
+
+        socket.on('audio-data', d => {
+            const chat = document.getElementById('chat');
+            const div = document.createElement('div'); div.className = 'msg';
+            div.innerHTML = `<b>${d.user}:</b> ${d.comment}`;
+            chat.prepend(div);
+
+            if (d.audio && !isMuted) {
+                queue.push(d.audio);
+                if (!playing) play();
+            }
+        });
+
+        function play() {
+            if (!queue.length || isMuted) { playing = false; return; }
+            playing = true;
+            const a = new Audio(queue.shift());
+            a.playbackRate = parseFloat(document.getElementById('speechSpeed').value);
+            a.onended = () => setTimeout(play, 300);
+            a.play().catch(() => play());
+        }
+    </script>
+</body>
+</html>
